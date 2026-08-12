@@ -6,7 +6,7 @@ use super::{StitchDisc, StitchOp, Weights};
 pub enum TsOp {
     Define,
     Done, // change to pass
-    Lam,
+    Lam(u32),
     Var(i32),
     Sym(Symbol)
 }
@@ -16,7 +16,7 @@ impl Display for TsOp {
         match self {
             Self::Define => f.write_str("define"),
             Self::Done => f.write_str("done"),
-            Self::Lam => f.write_str("lam"),
+            Self::Lam(n) => write!(f, "lam{n}"),
             Self::Var(n) => write!(f, "${n}"),
             Self::Sym(s) => Display::fmt(s, f),
         }
@@ -42,7 +42,7 @@ impl StitchDisc for TsOp {
     fn binds_child(&self, j: usize) -> u32 {
         match self {
             Self::Define => if j == 1 { 1 } else { 0 },
-            Self::Lam => if j == 0 { 1 } else { 0 }, // ! update for lams with arity >1
+            Self::Lam(n) => if j == 0 { *n } else { 0 },
             _ => 0,
         }
     }
@@ -52,10 +52,11 @@ impl StitchOp for TsOp {
     fn from_name(s: &str) -> Self {
         if let Some(rest) = s.strip_prefix('$')
             && let Ok(n) = rest.parse::<i32>() { return Self::Var(n); }
+        if let Some(rest) = s.strip_prefix("lam")
+            && let Ok(n) = rest.parse::<u32>() { return Self::Lam(n); }
         match s {
             "define" => Self::Define,
             "done" => Self::Done,
-            "lam" => Self::Lam,
             _ => Self::Sym(Symbol::from(s)),
         }
     }
