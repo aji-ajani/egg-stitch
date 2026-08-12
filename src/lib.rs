@@ -393,6 +393,12 @@ pub enum LanguageChoice {
     /// `Programs` root.
     #[value(name = "lambda-calc")]
     LambdaCalc,
+    /// Flat n-ary nodes with `TsOp` leaves.
+    /// Unlike the other flat choices this one has real binders, so
+    /// `var_depth` can be nonzero and higher-order capture is reachable —
+    /// `OpChildren`'s HO hooks still panic when it is.
+    #[value(name = "ts-op-children")]
+    TsOpChildren,
 }
 
 /// Tuple returned by [`multiple_step_search`]: `(library, corpus size after DSRs,

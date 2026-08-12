@@ -1,6 +1,6 @@
+use super::{StitchDisc, StitchOp, Weights};
 use egg::Symbol;
 use std::fmt::{self, Display, Formatter};
-use super::{StitchDisc, StitchOp, Weights};
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum TsOp {
@@ -8,7 +8,7 @@ pub enum TsOp {
     Done, // change to pass
     Lam(u32),
     Var(i32),
-    Sym(Symbol)
+    Sym(Symbol),
 }
 
 impl Display for TsOp {
@@ -35,14 +35,14 @@ impl StitchDisc for TsOp {
     fn de_bruijn_index(&self) -> Option<i32> {
         match self {
             Self::Var(n) => Some(*n),
-            _ => None
+            _ => None,
         }
     }
 
     fn binds_child(&self, j: usize) -> u32 {
-        match self {
-            Self::Define => if j == 1 { 1 } else { 0 },
-            Self::Lam(n) => if j == 0 { *n } else { 0 },
+        match (self, j) {
+            (Self::Define, 1) => 1,
+            (Self::Lam(n), 0) => *n,
             _ => 0,
         }
     }
@@ -51,9 +51,15 @@ impl StitchDisc for TsOp {
 impl StitchOp for TsOp {
     fn from_name(s: &str) -> Self {
         if let Some(rest) = s.strip_prefix('$')
-            && let Ok(n) = rest.parse::<i32>() { return Self::Var(n); }
+            && let Ok(n) = rest.parse::<i32>()
+        {
+            return Self::Var(n);
+        }
         if let Some(rest) = s.strip_prefix("lam")
-            && let Ok(n) = rest.parse::<u32>() { return Self::Lam(n); }
+            && let Ok(n) = rest.parse::<u32>()
+        {
+            return Self::Lam(n);
+        }
         match s {
             "define" => Self::Define,
             "done" => Self::Done,

@@ -8,6 +8,7 @@ mod op;
 mod op_children;
 mod op_db;
 mod op_with_var;
+mod ts_op;
 
 pub use family::{LambdaCalc, LanguageFamily, OpChildren};
 pub use lambda_calc::{LambdaCalcDisc, LambdaCalcLanguage};
@@ -15,6 +16,7 @@ pub use op::{Op, StitchDisc, StitchOp};
 pub use op_children::OpChildrenLanguage;
 pub use op_db::OpDB;
 pub use op_with_var::OpWithVar;
+pub use ts_op::TsOp;
 
 /// Trait covering every language usable with the search machinery.
 ///
