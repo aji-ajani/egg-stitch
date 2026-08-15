@@ -6,6 +6,7 @@ use std::fmt::{self, Display, Formatter};
 pub enum TsOp {
     Define,
     Done, // change to pass
+    App,
     Lam(u32),
     Var(i32),
     Sym(Symbol),
@@ -16,6 +17,7 @@ impl Display for TsOp {
         match self {
             Self::Define => f.write_str("define"),
             Self::Done => f.write_str("done"),
+            Self::App => f.write_str("app"),
             Self::Lam(n) => write!(f, "lam{n}"),
             Self::Var(n) => write!(f, "${n}"),
             Self::Sym(s) => Display::fmt(s, f),
@@ -25,7 +27,10 @@ impl Display for TsOp {
 
 impl StitchDisc for TsOp {
     fn intrinsic_size(&self, weights: &Weights) -> u32 {
-        weights.sym_var_cost
+        match self {
+            Self::App => weights.app_cost,
+            _ => weights.sym_var_cost,
+        }
     }
 
     fn as_var(&self) -> Option<egg::Var> {
@@ -63,6 +68,7 @@ impl StitchOp for TsOp {
         match s {
             "define" => Self::Define,
             "done" => Self::Done,
+            "app" => Self::App,
             _ => Self::Sym(Symbol::from(s)),
         }
     }
