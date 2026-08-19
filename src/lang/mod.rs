@@ -10,7 +10,7 @@ mod op_db;
 mod op_with_var;
 mod ts_op;
 
-pub use family::{LambdaCalc, LanguageFamily, OpChildren};
+pub use family::{LambdaCalc, LanguageFamily, OpChildren, TypeScriptLanguage};
 pub use lambda_calc::{LambdaCalcDisc, LambdaCalcLanguage};
 pub use op::{Op, StitchDisc, StitchOp};
 pub use op_children::OpChildrenLanguage;

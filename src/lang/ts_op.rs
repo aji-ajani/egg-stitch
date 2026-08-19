@@ -29,6 +29,7 @@ impl StitchDisc for TsOp {
     fn intrinsic_size(&self, weights: &Weights) -> u32 {
         match self {
             Self::App => weights.app_cost,
+            Self::Lam(_) => weights.lam_cost,
             _ => weights.sym_var_cost,
         }
     }

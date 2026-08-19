@@ -359,3 +359,80 @@ impl LanguageFamily for LambdaCalc {
         Ok(LambdaCalcLanguage::<OpWithVar<O>>::parse_program(s)?.into())
     }
 }
+
+/// TypeScript family: flat n-ary nodes like [`OpChildren`], but with real
+/// binders and applications carried by the leaf op (`TsOp::Lam(u32)` /
+/// `TsOp::App`) rather than absent.
+///
+/// Two consequences distinguish its cost model from both existing families,
+/// and both follow from one fact — a flat language keeps arity in the child
+/// vector, so the node count doesn't grow with arity:
+/// - a lambda binding `n` slots is **one** enode, so `lams_cost` is constant
+///   in `n` (`LambdaCalc` stacks `n` nodes and pays `n * lam_cost`);
+/// - an application is **one** enode, so `stub_application_size` is constant
+///   in arity (`LambdaCalc` curries and pays one `App` per argument).
+#[derive(Clone, Copy, Debug)]
+pub struct TypeScriptLanguage;
+
+impl LanguageFamily for TypeScriptLanguage {
+    type Discriminant<O: StitchOp> = O;
+    type Apply<O: StitchOp> = OpChildrenLanguage<O>;
+
+    fn make<P: StitchOp>(op: P, kids: Vec<Id>) -> OpChildrenLanguage<P> {
+        OpChildrenLanguage { op, children: kids }
+    }
+
+    fn map_discriminant<A: StitchOp, B: StitchOp>(op: A, mut f: impl FnMut(A) -> B) -> B {
+        f(op)
+    }
+
+    /// `fn_N(a, b)` is one flat `App` whose first child is the callee — the
+    /// variadic form, matching the corpus's `(app f a b)`.
+    fn add_stub_application<O: StitchOp>(name: &str, children: Vec<Id>, egraph: &mut StitchEgraph<OpChildrenLanguage<O>>) -> Id {
+        let head = egraph.add(Self::make(O::from_name(name), vec![]));
+        let mut kids = Vec::with_capacity(children.len() + 1);
+        kids.push(head);
+        kids.extend(children);
+        egraph.add(Self::make(O::from_name("app"), kids))
+    }
+
+    /// Callee leaf plus exactly one `App` spine node, whatever the arity.
+    fn stub_application_size(_arity: usize, weights: &Weights) -> u32 {
+        weights.app_cost + weights.sym_var_cost
+    }
+
+    fn symbol_cost(weights: &Weights) -> u32 {
+        weights.sym_var_cost
+    }
+
+    /// Same upper-bound reasoning as `LambdaCalc`: once wrapping is real, a
+    /// wrapped operand can collide with an existing eclass that already has a
+    /// cheaper rewrite, so the fast path only bounds the slow path.
+    fn check_fast_vs_slow(fast: i64, slow: i64) {
+        assert!(fast >= slow, "Fast rewrite size {} < slow rewrite size {} (TypeScriptLanguage) — fast path must be an upper bound", fast, slow);
+    }
+
+    fn make_var<O: StitchOp>(v: egg::Var) -> OpChildrenLanguage<OpWithVar<O>> {
+        Self::make(OpWithVar::Var(v), vec![])
+    }
+
+    /// One `Lam(n)` enode, not `n` stacked single-binders.
+    fn wrap_lams<O: StitchOp>(child: Id, n: u32, egraph: &mut StitchEgraph<OpChildrenLanguage<O>>) -> Id {
+        if n == 0 {
+            return child;
+        }
+        egraph.add(Self::make(O::from_name(&format!("lam{n}")), vec![child]))
+    }
+
+    fn lams_cost(n: u32, weights: &Weights) -> u32 {
+        if n == 0 { 0 } else { weights.lam_cost }
+    }
+
+    fn wrap_pattern_with_db_apps<O: StitchOp>(_recexpr: &mut egg::RecExpr<OpChildrenLanguage<OpWithVar<O>>>, _head: Id, _db_args: &[i32]) -> Id {
+        todo!("TypeScriptLanguage::wrap_pattern_with_db_apps — Task 2")
+    }
+
+    fn display_pattern_as_lambda<O: StitchOp>(_nodes: &[OpChildrenLanguage<OpWithVar<O>>], _vars: &[Vec<Id>], _var_depth: &[u32], _variable_indices: &[Vec<i32>]) -> String {
+        todo!("TypeScriptLanguage::display_pattern_as_lambda — Task 3")
+    }
+}

@@ -1,0 +1,109 @@
+//! Tests for the `TypeScriptLanguage` family: a flat n-ary language whose
+//! binders and applications are real (`TsOp::Lam(n)` / `TsOp::App`) rather than
+//! absent as in `OpChildren`.
+//!
+//! The two `*_matches_the_egraph_size_delta` tests are the important ones. Each
+//! cost hook is contractually "the summed node cost of the enodes this family
+//! inserts", and `check_fast_vs_slow` compares that arithmetic against a
+//! rebuilt e-graph — so a cost function that disagrees with its own constructor
+//! is a live bug, not a tuning preference.
+
+use egg::Id;
+use egg_stitch::lang::{LanguageFamily, OpChildrenLanguage, StitchAnalysis, StitchDisc, StitchEgraph, StitchOp, TsOp, TypeScriptLanguage, Weights};
+
+type Lang = OpChildrenLanguage<TsOp>;
+
+fn egraph(weights: Weights) -> StitchEgraph<Lang> {
+    StitchEgraph::new(StitchAnalysis::new(weights))
+}
+
+fn leaf(g: &mut StitchEgraph<Lang>, name: &str) -> Id {
+    g.add(OpChildrenLanguage { op: TsOp::from_name(name), children: vec![] })
+}
+
+#[test]
+fn ts_op_round_trips_the_ops_the_family_builds() {
+    // `TypeScriptLanguage` constructs its binder and application through
+    // `from_name` rather than a dedicated constructor, so a rename on either
+    // side of this round trip would silently downgrade them to opaque symbols:
+    // no compile error, no panic, just wrong costs and nodes that never unify
+    // with the corpus. This test is the guard for that.
+    assert_eq!(TsOp::from_name("app"), TsOp::App);
+    assert_eq!(TsOp::from_name("lam2"), TsOp::Lam(2));
+    assert_eq!(TsOp::App.to_string(), "app");
+    assert_eq!(TsOp::Lam(2).to_string(), "lam2");
+}
+
+#[test]
+fn wrap_lams_adds_one_node_that_binds_n() {
+    let mut g = egraph(Weights::default());
+    let body = leaf(&mut g, "x");
+    let wrapped = TypeScriptLanguage::wrap_lams::<TsOp>(body, 3, &mut g);
+    assert_ne!(wrapped, g.find(body), "wrap must produce a new eclass");
+    let node = g[wrapped].nodes.first().expect("wrapped eclass is non-empty").clone();
+    assert_eq!(node.op, TsOp::Lam(3), "one Lam(3) node, not three Lam(1)s");
+    assert_eq!(node.children.len(), 1);
+    assert_eq!(node.op.binds_child(0), 3);
+}
+
+#[test]
+fn wrap_lams_of_zero_is_the_identity() {
+    let mut g = egraph(Weights::default());
+    let body = leaf(&mut g, "x");
+    assert_eq!(TypeScriptLanguage::wrap_lams::<TsOp>(body, 0, &mut g), body);
+}
+
+#[test]
+fn lams_cost_is_flat_in_n() {
+    let w = Weights { sym_var_cost: 1, app_cost: 1, lam_cost: 7 };
+    assert_eq!(TypeScriptLanguage::lams_cost(0, &w), 0);
+    for n in 1..=5u32 {
+        assert_eq!(TypeScriptLanguage::lams_cost(n, &w), 7, "lams_cost must not scale with n");
+    }
+}
+
+#[test]
+fn lams_cost_matches_the_egraph_size_delta() {
+    let w = Weights { sym_var_cost: 1, app_cost: 1, lam_cost: 7 };
+    for n in 1..=4u32 {
+        let mut g = egraph(w);
+        let body = leaf(&mut g, "x");
+        let before = g[body].data.size;
+        let wrapped = TypeScriptLanguage::wrap_lams::<TsOp>(body, n, &mut g);
+        let delta = g[wrapped].data.size - before;
+        assert_eq!(delta, TypeScriptLanguage::lams_cost(n, &w), "lams_cost({n}) must equal the size the e-graph actually grew by");
+    }
+}
+
+#[test]
+fn stub_application_size_is_arity_independent() {
+    let w = Weights { sym_var_cost: 2, app_cost: 5, lam_cost: 1 };
+    for arity in 0..=10usize {
+        assert_eq!(TypeScriptLanguage::stub_application_size(arity, &w), 7, "app_cost + sym_var_cost, regardless of arity");
+    }
+}
+
+#[test]
+fn stub_application_size_matches_the_egraph_size_delta() {
+    let w = Weights { sym_var_cost: 2, app_cost: 5, lam_cost: 1 };
+    for arity in 0..=4usize {
+        let mut g = egraph(w);
+        let kids: Vec<Id> = (0..arity).map(|i| leaf(&mut g, &format!("a{i}"))).collect();
+        let kid_total: u32 = kids.iter().map(|&k| g[k].data.size).sum();
+        let stub = TypeScriptLanguage::add_stub_application::<TsOp>("fn_0", kids, &mut g);
+        let spine = g[stub].data.size - kid_total;
+        assert_eq!(spine, TypeScriptLanguage::stub_application_size(arity, &w), "stub_application_size({arity}) must equal the spine the e-graph actually grew by");
+    }
+}
+
+#[test]
+fn stub_application_is_one_flat_app_over_the_callee() {
+    let mut g = egraph(Weights::default());
+    let a = leaf(&mut g, "a");
+    let b = leaf(&mut g, "b");
+    let stub = TypeScriptLanguage::add_stub_application::<TsOp>("fn_0", vec![a, b], &mut g);
+    let node = g[stub].nodes.first().expect("stub eclass is non-empty").clone();
+    assert_eq!(node.op, TsOp::App, "a call is an App node, not a head-as-op node");
+    assert_eq!(node.children.len(), 3, "children are [callee, a, b] — flat, not curried");
+    assert_eq!(g[node.children[0]].nodes.first().unwrap().op, TsOp::from_name("fn_0"));
+}
