@@ -107,3 +107,102 @@ fn stub_application_is_one_flat_app_over_the_callee() {
     assert_eq!(node.children.len(), 3, "children are [callee, a, b] — flat, not curried");
     assert_eq!(g[node.children[0]].nodes.first().unwrap().op, TsOp::from_name("fn_0"));
 }
+
+use egg::RecExpr;
+use egg_stitch::lang::OpWithVar;
+
+type PatLang = OpChildrenLanguage<OpWithVar<TsOp>>;
+
+fn pat_leaf(r: &mut RecExpr<PatLang>, op: OpWithVar<TsOp>) -> Id {
+    r.add(OpChildrenLanguage { op, children: vec![] })
+}
+
+fn metavar_head(r: &mut RecExpr<PatLang>, k: u32) -> Id {
+    pat_leaf(r, OpWithVar::Var(egg::Var::from(k)))
+}
+
+fn round_trip(db_args: &[i32]) {
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let head = metavar_head(&mut r, 0);
+    let wrapped = TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, db_args);
+    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), wrapped), head, "unwrap should recover the metavar head for db_args = {db_args:?}");
+}
+
+#[test]
+fn wrap_pattern_builds_one_flat_app() {
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let head = metavar_head(&mut r, 0);
+    let wrapped = TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[1, 0]);
+    let node = &r.as_ref()[usize::from(wrapped)];
+    assert_eq!(node.op, OpWithVar::Node(TsOp::App), "one App node, not a curried chain");
+    assert_eq!(node.children.len(), 3, "children are [head, $1, $0]");
+    assert_eq!(node.children[0], head);
+}
+
+#[test]
+fn wrap_pattern_with_no_args_is_the_identity() {
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let head = metavar_head(&mut r, 0);
+    assert_eq!(TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[]), head);
+}
+
+#[test]
+fn round_trip_ho_arity_1() {
+    round_trip(&[0]);
+}
+
+#[test]
+fn round_trip_ho_arity_2_canonical() {
+    // `vis = [0, 1]` sorted ascending → `db_args = vis.iter().rev() = [1, 0]`.
+    // This is the arity that broke in LambdaCalc; it gets first-class coverage.
+    round_trip(&[1, 0]);
+}
+
+#[test]
+fn round_trip_ho_arity_3_canonical() {
+    round_trip(&[2, 1, 0]);
+}
+
+#[test]
+fn round_trip_ho_arity_2_sparse() {
+    // Non-contiguous vis like `[0, 2]` → `db_args = [2, 0]`.
+    round_trip(&[2, 0]);
+}
+
+#[test]
+fn genuine_application_with_non_metavar_head_is_left_alone() {
+    // `(app f $1 $0)` has the exact shape of an eta-wrap, but its head is a
+    // regular op rather than a metavar. Collapsing it would silently rewrite a
+    // real call into its callee.
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let f = pat_leaf(&mut r, OpWithVar::Node(TsOp::from_name("f")));
+    let v1 = pat_leaf(&mut r, OpWithVar::Node(TsOp::Var(1)));
+    let v0 = pat_leaf(&mut r, OpWithVar::Node(TsOp::Var(0)));
+    let app = r.add(OpChildrenLanguage {
+        op: OpWithVar::Node(TsOp::App),
+        children: vec![f, v1, v0],
+    });
+    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
+}
+
+#[test]
+fn ascending_db_args_are_not_an_eta_wrap() {
+    // The wrapper always emits strictly descending indices. An ascending run is
+    // some other term that happens to be var-headed; leave it alone.
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let head = metavar_head(&mut r, 0);
+    let v0 = pat_leaf(&mut r, OpWithVar::Node(TsOp::Var(0)));
+    let v1 = pat_leaf(&mut r, OpWithVar::Node(TsOp::Var(1)));
+    let app = r.add(OpChildrenLanguage {
+        op: OpWithVar::Node(TsOp::App),
+        children: vec![head, v0, v1],
+    });
+    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
+}
+
+#[test]
+fn metavar_alone_is_left_alone() {
+    let mut r: RecExpr<PatLang> = RecExpr::default();
+    let head = metavar_head(&mut r, 0);
+    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), head), head);
+}

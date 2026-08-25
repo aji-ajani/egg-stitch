@@ -428,8 +428,44 @@ impl LanguageFamily for TypeScriptLanguage {
         if n == 0 { 0 } else { weights.lam_cost }
     }
 
-    fn wrap_pattern_with_db_apps<O: StitchOp>(_recexpr: &mut egg::RecExpr<OpChildrenLanguage<OpWithVar<O>>>, _head: Id, _db_args: &[i32]) -> Id {
-        todo!("TypeScriptLanguage::wrap_pattern_with_db_apps — Task 2")
+    /// Flat counterpart of `LambdaCalc`'s curried version: one `App` whose
+    /// first child is the head and whose remaining children are the DB-var
+    /// leaves, in the `(n-1, n-2, …, 0)` order the caller supplies.
+    fn wrap_pattern_with_db_apps<O: StitchOp>(recexpr: &mut egg::RecExpr<OpChildrenLanguage<OpWithVar<O>>>, head: Id, db_args: &[i32]) -> Id {
+        if db_args.is_empty() {
+            return head;
+        }
+        let mut kids = Vec::with_capacity(db_args.len() + 1);
+        kids.push(head);
+        for &db in db_args {
+            let var_op = OpWithVar::Node(O::make_db_var(db).expect("higher-order display needs a DB-var-bearing leaf op"));
+            kids.push(recexpr.add(OpChildrenLanguage { op: var_op, children: vec![] }));
+        }
+        recexpr.add(OpChildrenLanguage {
+            op: OpWithVar::Node(O::from_name("app")),
+            children: kids,
+        })
+    }
+
+    /// Inverse of [`Self::wrap_pattern_with_db_apps`]. Peels the single `App`
+    /// this family emits, but only when the subtree really is an eta-wrap:
+    /// every argument is a DB var, the indices strictly descend (the
+    /// `(n-1, …, 0)` order the wrapper writes), and the head is a metavar.
+    /// The head check is what keeps a genuine `(app f $1 $0)` intact.
+    fn unwrap_pattern_db_apps<O: StitchOp>(nodes: &[OpChildrenLanguage<OpWithVar<O>>], id: Id) -> Id {
+        let node = &nodes[usize::from(id)];
+        if node.op != OpWithVar::Node(O::from_name("app")) || node.children.len() < 2 {
+            return id;
+        }
+        let mut prev: Option<i32> = None;
+        for &c in &node.children[1..] {
+            let Some(db) = nodes[usize::from(c)].op.de_bruijn_index() else { return id };
+            if prev.is_some_and(|p| db >= p) {
+                return id;
+            }
+            prev = Some(db);
+        }
+        if nodes[usize::from(node.children[0])].op.as_var().is_some() { node.children[0] } else { id }
     }
 
     fn display_pattern_as_lambda<O: StitchOp>(_nodes: &[OpChildrenLanguage<OpWithVar<O>>], _vars: &[Vec<Id>], _var_depth: &[u32], _variable_indices: &[Vec<i32>]) -> String {
