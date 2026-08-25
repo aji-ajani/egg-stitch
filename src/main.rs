@@ -1,7 +1,7 @@
 use clap::Parser;
 use egg_stitch::{
     Args, LanguageChoice, SearchKind, io,
-    lang::{LambdaCalc, Op, OpChildren, OpDB, StitchOp, TsOp},
+    lang::{LambdaCalc, Op, OpChildren, OpDB, StitchOp, TsOp, TypeScript},
     multiple_step_search, results,
 };
 
@@ -42,7 +42,7 @@ fn main() {
         LanguageChoice::OpChildren => run::<OpChildren, Op>(&args),
         LanguageChoice::OpChildrenDb => run::<OpChildren, OpDB<Op>>(&args),
         LanguageChoice::LambdaCalc => run::<LambdaCalc, OpDB<Op>>(&args),
-        LanguageChoice::TsOpChildren => run::<OpChildren, TsOp>(&args),
+        LanguageChoice::TypeScript => run::<TypeScript, TsOp>(&args),
     };
 
     let elapsed_secs = start.elapsed().as_secs_f64();

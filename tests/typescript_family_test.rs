@@ -1,4 +1,4 @@
-//! Tests for the `TypeScriptLanguage` family: a flat n-ary language whose
+//! Tests for the `TypeScript` family: a flat n-ary language whose
 //! binders and applications are real (`TsOp::Lam(n)` / `TsOp::App`) rather than
 //! absent as in `OpChildren`.
 //!
@@ -9,7 +9,7 @@
 //! is a live bug, not a tuning preference.
 
 use egg::Id;
-use egg_stitch::lang::{LanguageFamily, OpChildrenLanguage, StitchAnalysis, StitchDisc, StitchEgraph, StitchOp, TsOp, TypeScriptLanguage, Weights};
+use egg_stitch::lang::{LanguageFamily, OpChildrenLanguage, StitchAnalysis, StitchDisc, StitchEgraph, StitchOp, TsOp, TypeScript, Weights};
 
 type Lang = OpChildrenLanguage<TsOp>;
 
@@ -23,7 +23,7 @@ fn leaf(g: &mut StitchEgraph<Lang>, name: &str) -> Id {
 
 #[test]
 fn ts_op_round_trips_the_ops_the_family_builds() {
-    // `TypeScriptLanguage` constructs its binder and application through
+    // `TypeScript` constructs its binder and application through
     // `from_name` rather than a dedicated constructor, so a rename on either
     // side of this round trip would silently downgrade them to opaque symbols:
     // no compile error, no panic, just wrong costs and nodes that never unify
@@ -38,7 +38,7 @@ fn ts_op_round_trips_the_ops_the_family_builds() {
 fn wrap_lams_adds_one_node_that_binds_n() {
     let mut g = egraph(Weights::default());
     let body = leaf(&mut g, "x");
-    let wrapped = TypeScriptLanguage::wrap_lams::<TsOp>(body, 3, &mut g);
+    let wrapped = TypeScript::wrap_lams::<TsOp>(body, 3, &mut g);
     assert_ne!(wrapped, g.find(body), "wrap must produce a new eclass");
     let node = g[wrapped].nodes.first().expect("wrapped eclass is non-empty").clone();
     assert_eq!(node.op, TsOp::Lam(3), "one Lam(3) node, not three Lam(1)s");
@@ -50,15 +50,15 @@ fn wrap_lams_adds_one_node_that_binds_n() {
 fn wrap_lams_of_zero_is_the_identity() {
     let mut g = egraph(Weights::default());
     let body = leaf(&mut g, "x");
-    assert_eq!(TypeScriptLanguage::wrap_lams::<TsOp>(body, 0, &mut g), body);
+    assert_eq!(TypeScript::wrap_lams::<TsOp>(body, 0, &mut g), body);
 }
 
 #[test]
 fn lams_cost_is_flat_in_n() {
     let w = Weights { sym_var_cost: 1, app_cost: 1, lam_cost: 7 };
-    assert_eq!(TypeScriptLanguage::lams_cost(0, &w), 0);
+    assert_eq!(TypeScript::lams_cost(0, &w), 0);
     for n in 1..=5u32 {
-        assert_eq!(TypeScriptLanguage::lams_cost(n, &w), 7, "lams_cost must not scale with n");
+        assert_eq!(TypeScript::lams_cost(n, &w), 7, "lams_cost must not scale with n");
     }
 }
 
@@ -69,9 +69,9 @@ fn lams_cost_matches_the_egraph_size_delta() {
         let mut g = egraph(w);
         let body = leaf(&mut g, "x");
         let before = g[body].data.size;
-        let wrapped = TypeScriptLanguage::wrap_lams::<TsOp>(body, n, &mut g);
+        let wrapped = TypeScript::wrap_lams::<TsOp>(body, n, &mut g);
         let delta = g[wrapped].data.size - before;
-        assert_eq!(delta, TypeScriptLanguage::lams_cost(n, &w), "lams_cost({n}) must equal the size the e-graph actually grew by");
+        assert_eq!(delta, TypeScript::lams_cost(n, &w), "lams_cost({n}) must equal the size the e-graph actually grew by");
     }
 }
 
@@ -79,7 +79,7 @@ fn lams_cost_matches_the_egraph_size_delta() {
 fn stub_application_size_is_arity_independent() {
     let w = Weights { sym_var_cost: 2, app_cost: 5, lam_cost: 1 };
     for arity in 0..=10usize {
-        assert_eq!(TypeScriptLanguage::stub_application_size(arity, &w), 7, "app_cost + sym_var_cost, regardless of arity");
+        assert_eq!(TypeScript::stub_application_size(arity, &w), 7, "app_cost + sym_var_cost, regardless of arity");
     }
 }
 
@@ -90,9 +90,9 @@ fn stub_application_size_matches_the_egraph_size_delta() {
         let mut g = egraph(w);
         let kids: Vec<Id> = (0..arity).map(|i| leaf(&mut g, &format!("a{i}"))).collect();
         let kid_total: u32 = kids.iter().map(|&k| g[k].data.size).sum();
-        let stub = TypeScriptLanguage::add_stub_application::<TsOp>("fn_0", kids, &mut g);
+        let stub = TypeScript::add_stub_application::<TsOp>("fn_0", kids, &mut g);
         let spine = g[stub].data.size - kid_total;
-        assert_eq!(spine, TypeScriptLanguage::stub_application_size(arity, &w), "stub_application_size({arity}) must equal the spine the e-graph actually grew by");
+        assert_eq!(spine, TypeScript::stub_application_size(arity, &w), "stub_application_size({arity}) must equal the spine the e-graph actually grew by");
     }
 }
 
@@ -101,7 +101,7 @@ fn stub_application_is_one_flat_app_over_the_callee() {
     let mut g = egraph(Weights::default());
     let a = leaf(&mut g, "a");
     let b = leaf(&mut g, "b");
-    let stub = TypeScriptLanguage::add_stub_application::<TsOp>("fn_0", vec![a, b], &mut g);
+    let stub = TypeScript::add_stub_application::<TsOp>("fn_0", vec![a, b], &mut g);
     let node = g[stub].nodes.first().expect("stub eclass is non-empty").clone();
     assert_eq!(node.op, TsOp::App, "a call is an App node, not a head-as-op node");
     assert_eq!(node.children.len(), 3, "children are [callee, a, b] — flat, not curried");
@@ -124,15 +124,15 @@ fn metavar_head(r: &mut RecExpr<PatLang>, k: u32) -> Id {
 fn round_trip(db_args: &[i32]) {
     let mut r: RecExpr<PatLang> = RecExpr::default();
     let head = metavar_head(&mut r, 0);
-    let wrapped = TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, db_args);
-    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), wrapped), head, "unwrap should recover the metavar head for db_args = {db_args:?}");
+    let wrapped = TypeScript::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, db_args);
+    assert_eq!(TypeScript::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), wrapped), head, "unwrap should recover the metavar head for db_args = {db_args:?}");
 }
 
 #[test]
 fn wrap_pattern_builds_one_flat_app() {
     let mut r: RecExpr<PatLang> = RecExpr::default();
     let head = metavar_head(&mut r, 0);
-    let wrapped = TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[1, 0]);
+    let wrapped = TypeScript::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[1, 0]);
     let node = &r.as_ref()[usize::from(wrapped)];
     assert_eq!(node.op, OpWithVar::Node(TsOp::App), "one App node, not a curried chain");
     assert_eq!(node.children.len(), 3, "children are [head, $1, $0]");
@@ -143,7 +143,7 @@ fn wrap_pattern_builds_one_flat_app() {
 fn wrap_pattern_with_no_args_is_the_identity() {
     let mut r: RecExpr<PatLang> = RecExpr::default();
     let head = metavar_head(&mut r, 0);
-    assert_eq!(TypeScriptLanguage::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[]), head);
+    assert_eq!(TypeScript::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &[]), head);
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn genuine_application_with_non_metavar_head_is_left_alone() {
         op: OpWithVar::Node(TsOp::App),
         children: vec![f, v1, v0],
     });
-    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
+    assert_eq!(TypeScript::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
 }
 
 #[test]
@@ -197,14 +197,14 @@ fn ascending_db_args_are_not_an_eta_wrap() {
         op: OpWithVar::Node(TsOp::App),
         children: vec![head, v0, v1],
     });
-    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
+    assert_eq!(TypeScript::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), app), app);
 }
 
 #[test]
 fn metavar_alone_is_left_alone() {
     let mut r: RecExpr<PatLang> = RecExpr::default();
     let head = metavar_head(&mut r, 0);
-    assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), head), head);
+    assert_eq!(TypeScript::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), head), head);
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn display_pattern_wraps_body_in_one_lam_node() {
         },
     ];
 
-    let rendered = TypeScriptLanguage::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![hole]], &[0], &[vec![]]);
+    let rendered = TypeScript::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![hole]], &[0], &[vec![]]);
 
     assert!(rendered.starts_with("(lam1 "), "expected a single lam1 wrapper, got {rendered}");
     assert!(!rendered.contains("lam1 (lam1"), "binders must not be stacked, got {rendered}");
@@ -260,7 +260,7 @@ fn display_pattern_uses_one_lam_node_for_arity_two() {
         },
     ];
 
-    let rendered = TypeScriptLanguage::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![h0], vec![h1]], &[0, 0], &[vec![], vec![]]);
+    let rendered = TypeScript::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![h0], vec![h1]], &[0, 0], &[vec![], vec![]]);
 
     assert!(rendered.starts_with("(lam2 "), "expected a single lam2 wrapper, got {rendered}");
     assert!(!rendered.contains("lam1"), "arity-2 must be one lam2, not nested lam1s, got {rendered}");

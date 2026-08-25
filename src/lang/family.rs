@@ -372,9 +372,9 @@ impl LanguageFamily for LambdaCalc {
 /// - an application is **one** enode, so `stub_application_size` is constant
 ///   in arity (`LambdaCalc` curries and pays one `App` per argument).
 #[derive(Clone, Copy, Debug)]
-pub struct TypeScriptLanguage;
+pub struct TypeScript;
 
-impl LanguageFamily for TypeScriptLanguage {
+impl LanguageFamily for TypeScript {
     type Discriminant<O: StitchOp> = O;
     type Apply<O: StitchOp> = OpChildrenLanguage<O>;
 
@@ -409,7 +409,7 @@ impl LanguageFamily for TypeScriptLanguage {
     /// wrapped operand can collide with an existing eclass that already has a
     /// cheaper rewrite, so the fast path only bounds the slow path.
     fn check_fast_vs_slow(fast: i64, slow: i64) {
-        assert!(fast >= slow, "Fast rewrite size {} < slow rewrite size {} (TypeScriptLanguage) — fast path must be an upper bound", fast, slow);
+        assert!(fast >= slow, "Fast rewrite size {} < slow rewrite size {} (TypeScript) — fast path must be an upper bound", fast, slow);
     }
 
     fn make_var<O: StitchOp>(v: egg::Var) -> OpChildrenLanguage<OpWithVar<O>> {
@@ -490,7 +490,7 @@ impl LanguageFamily for TypeScriptLanguage {
                 depth[usize::from(c)] = d + disc.binds_child(j);
             }
         }
-        let db = |n: i32| O::make_db_var(n).expect("TypeScriptLanguage requires a DB-var-bearing leaf op");
+        let db = |n: i32| O::make_db_var(n).expect("TypeScript requires a DB-var-bearing leaf op");
         let app = O::from_name("app");
         let mut out: RecExpr<OpChildrenLanguage<O>> = RecExpr::default();
         let mut id_map: Vec<Id> = vec![Id::from(0); nodes.len()];
