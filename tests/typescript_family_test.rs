@@ -206,3 +206,62 @@ fn metavar_alone_is_left_alone() {
     let head = metavar_head(&mut r, 0);
     assert_eq!(TypeScriptLanguage::unwrap_pattern_db_apps::<TsOp>(r.as_ref(), head), head);
 }
+
+#[test]
+fn display_pattern_wraps_body_in_one_lam_node() {
+    // Pattern body `(app f ?#0)` with arity 1: `?#0` becomes `$0` and the whole
+    // thing is wrapped in a single `lam1`, not a stack of `lam1`s.
+    // Nodes are in `RevExpr` order — root at index 0, children after it —
+    // because that is what `Pattern::display_as_lambda` passes in.
+    let hole = Id::from(2);
+    let nodes: Vec<PatLang> = vec![
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::App),
+            children: vec![Id::from(1), hole],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::from_name("f")),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(0u32)),
+            children: vec![],
+        },
+    ];
+
+    let rendered = TypeScriptLanguage::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![hole]], &[0], &[vec![]]);
+
+    assert!(rendered.starts_with("(lam1 "), "expected a single lam1 wrapper, got {rendered}");
+    assert!(!rendered.contains("lam1 (lam1"), "binders must not be stacked, got {rendered}");
+    assert!(rendered.contains("$0"), "the metavar should render as a de Bruijn leaf, got {rendered}");
+}
+
+#[test]
+fn display_pattern_uses_one_lam_node_for_arity_two() {
+    // Two slots share one binder node: `lam2`, never `(lam1 (lam1 …))`.
+    let h0 = Id::from(2);
+    let h1 = Id::from(3);
+    let nodes: Vec<PatLang> = vec![
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::App),
+            children: vec![Id::from(1), h0, h1],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::from_name("f")),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(0u32)),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(1u32)),
+            children: vec![],
+        },
+    ];
+
+    let rendered = TypeScriptLanguage::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![h0], vec![h1]], &[0, 0], &[vec![], vec![]]);
+
+    assert!(rendered.starts_with("(lam2 "), "expected a single lam2 wrapper, got {rendered}");
+    assert!(!rendered.contains("lam1"), "arity-2 must be one lam2, not nested lam1s, got {rendered}");
+}

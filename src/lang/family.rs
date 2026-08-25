@@ -468,7 +468,69 @@ impl LanguageFamily for TypeScriptLanguage {
         if nodes[usize::from(node.children[0])].op.as_var().is_some() { node.children[0] } else { id }
     }
 
-    fn display_pattern_as_lambda<O: StitchOp>(_nodes: &[OpChildrenLanguage<OpWithVar<O>>], _vars: &[Vec<Id>], _var_depth: &[u32], _variable_indices: &[Vec<i32>]) -> String {
-        todo!("TypeScriptLanguage::display_pattern_as_lambda — Task 3")
+    /// Render an abstraction body as `(lam<arity> BODY)` — one binder node for
+    /// all `arity` slots — with each `?#k` becoming the de Bruijn leaf that
+    /// points at slot `k`, plus a flat `App` of its captured indices when the
+    /// slot is higher-order.
+    fn display_pattern_as_lambda<O: StitchOp>(nodes: &[OpChildrenLanguage<OpWithVar<O>>], vars: &[Vec<Id>], var_depth: &[u32], variable_indices: &[Vec<i32>]) -> String {
+        let arity = vars.len();
+        let mut pos_to_k: FxHashMap<usize, usize> = FxHashMap::default();
+        for (k, ids) in vars.iter().enumerate() {
+            for &id in ids {
+                pos_to_k.insert(usize::from(id), k);
+            }
+        }
+        // Local binder depth at each position. `binds_child` returns the slot
+        // count, so a single `Lam(n)` advances depth by `n` in one step.
+        let mut depth: Vec<u32> = vec![0; nodes.len()];
+        for i in 0..nodes.len() {
+            let d = depth[i];
+            let disc = nodes[i].discriminant();
+            for (j, &c) in nodes[i].children().iter().enumerate() {
+                depth[usize::from(c)] = d + disc.binds_child(j);
+            }
+        }
+        let db = |n: i32| O::make_db_var(n).expect("TypeScriptLanguage requires a DB-var-bearing leaf op");
+        let app = O::from_name("app");
+        let mut out: RecExpr<OpChildrenLanguage<O>> = RecExpr::default();
+        let mut id_map: Vec<Id> = vec![Id::from(0); nodes.len()];
+        for i in (0..nodes.len()).rev() {
+            let new_id = if let Some(&k) = pos_to_k.get(&i) {
+                let head_idx = ((arity as u32 - 1 - k as u32) + depth[i]) as i32;
+                let head = out.add(OpChildrenLanguage { op: db(head_idx), children: vec![] });
+                if variable_indices[k].is_empty() {
+                    head
+                } else {
+                    // Deeper occurrences sit under `depth[i] − var_depth[k]`
+                    // extra binders, so each captured index shifts up by that.
+                    let occ_shift = depth[i] as i32 - var_depth[k] as i32;
+                    let mut kids = Vec::with_capacity(variable_indices[k].len() + 1);
+                    kids.push(head);
+                    for dbidx in variable_indices[k].iter().rev() {
+                        kids.push(out.add(OpChildrenLanguage { op: db(*dbidx + occ_shift), children: vec![] }));
+                    }
+                    out.add(OpChildrenLanguage { op: app.clone(), children: kids })
+                }
+            } else {
+                let new_children: Vec<Id> = nodes[i].children().iter().map(|&c| id_map[usize::from(c)]).collect();
+                let op = match &nodes[i].op {
+                    OpWithVar::Node(o) => o.clone(),
+                    OpWithVar::Var(_) => unreachable!("Var leaf at position not in pos_to_k"),
+                };
+                out.add(OpChildrenLanguage { op, children: new_children })
+            };
+            id_map[i] = new_id;
+        }
+        let body = id_map[0];
+        let root = if arity == 0 {
+            body
+        } else {
+            out.add(OpChildrenLanguage {
+                op: O::from_name(&format!("lam{arity}")),
+                children: vec![body],
+            })
+        };
+        let _ = root;
+        <OpChildrenLanguage<O> as StitchLanguage>::display_recexpr(&out)
     }
 }
