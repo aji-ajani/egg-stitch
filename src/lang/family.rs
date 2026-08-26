@@ -69,6 +69,13 @@ pub trait LanguageFamily: Clone + 'static {
     /// Total node-count cost of `n` stacked lambda binders under `weights`.
     fn lams_cost(n: u32, weights: &Weights) -> u32;
 
+    /// Cost of the η-wrap carried by **one** syntactic occurrence of a metavar
+    /// that captures `h > 0` indices — the nodes
+    /// [`Self::wrap_pattern_with_db_apps`] adds around that occurrence, and
+    /// nothing else. `compute_body_size_with_ho` multiplies this by the
+    /// occurrence count.
+    fn ho_occurrence_cost(h: u32, weights: &Weights) -> u32;
+
     /// In a pattern-side `RecExpr`, wrap `head` in `n` curried applications to
     /// fresh DB-var leaves `$(n-1), $(n-2), …, $0` (outer-local first). Returns
     /// the id of the outermost App. Used by `Pattern::display_with_ho` to render
@@ -157,6 +164,10 @@ impl LanguageFamily for OpChildren {
     }
 
     fn lams_cost(_n: u32, _weights: &Weights) -> u32 {
+        panic!("OpChildren has no lambda binders; higher-order capture is unreachable here");
+    }
+
+    fn ho_occurrence_cost(_h: u32, _weights: &Weights) -> u32 {
         panic!("OpChildren has no lambda binders; higher-order capture is unreachable here");
     }
 
@@ -264,6 +275,11 @@ impl LanguageFamily for LambdaCalc {
 
     fn lams_cost(n: u32, weights: &Weights) -> u32 {
         n * weights.lam_cost
+    }
+
+    /// One curried `App` and one DB-var leaf per captured index.
+    fn ho_occurrence_cost(h: u32, weights: &Weights) -> u32 {
+        h * (weights.app_cost + weights.sym_var_cost)
     }
 
     fn wrap_pattern_with_db_apps<O: StitchOp>(recexpr: &mut egg::RecExpr<LambdaCalcLanguage<OpWithVar<O>>>, head: Id, db_args: &[i32]) -> Id {
@@ -426,6 +442,12 @@ impl LanguageFamily for TypeScript {
 
     fn lams_cost(n: u32, weights: &Weights) -> u32 {
         if n == 0 { 0 } else { weights.lam_cost }
+    }
+
+    /// One flat `App` whatever the arity, plus one DB-var leaf per captured
+    /// index — the same node count `wrap_pattern_with_db_apps` emits.
+    fn ho_occurrence_cost(h: u32, weights: &Weights) -> u32 {
+        weights.app_cost + h * weights.sym_var_cost
     }
 
     /// Flat counterpart of `LambdaCalc`'s curried version: one `App` whose

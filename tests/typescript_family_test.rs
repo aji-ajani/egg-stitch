@@ -8,8 +8,9 @@
 //! rebuilt e-graph — so a cost function that disagrees with its own constructor
 //! is a live bug, not a tuning preference.
 
-use egg::Id;
-use egg_stitch::lang::{LanguageFamily, OpChildrenLanguage, StitchAnalysis, StitchDisc, StitchEgraph, StitchOp, TsOp, TypeScript, Weights};
+use egg::{Id, RecExpr};
+use egg_stitch::lang::{LambdaCalc, LambdaCalcLanguage, LanguageFamily, Op, OpChildrenLanguage, OpDB, OpWithVar, StitchAnalysis, StitchDisc, StitchEgraph, StitchOp, TsOp, TypeScript, Weights};
+use egg_stitch::cost::compute_recexpr_size;
 
 type Lang = OpChildrenLanguage<TsOp>;
 
@@ -107,9 +108,6 @@ fn stub_application_is_one_flat_app_over_the_callee() {
     assert_eq!(node.children.len(), 3, "children are [callee, a, b] — flat, not curried");
     assert_eq!(g[node.children[0]].nodes.first().unwrap().op, TsOp::from_name("fn_0"));
 }
-
-use egg::RecExpr;
-use egg_stitch::lang::OpWithVar;
 
 type PatLang = OpChildrenLanguage<OpWithVar<TsOp>>;
 
@@ -264,4 +262,174 @@ fn display_pattern_uses_one_lam_node_for_arity_two() {
 
     assert!(rendered.starts_with("(lam2 "), "expected a single lam2 wrapper, got {rendered}");
     assert!(!rendered.contains("lam1"), "arity-2 must be one lam2, not nested lam1s, got {rendered}");
+}
+
+#[test]
+fn display_pattern_with_zero_arity_has_no_binder() {
+    // A zero-arity abstraction is a closed term: there is no slot to bind, so
+    // the body is returned bare rather than wrapped in a `lam0` that `TsOp`
+    // would parse as `Lam(0)` — a binder that binds nothing.
+    let nodes: Vec<PatLang> = vec![
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::App),
+            children: vec![Id::from(1), Id::from(2)],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::from_name("f")),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::from_name("x")),
+            children: vec![],
+        },
+    ];
+
+    let rendered = TypeScript::display_pattern_as_lambda::<TsOp>(&nodes, &[], &[], &[]);
+
+    assert_eq!(rendered, "(app f x)", "arity 0 must render the body unwrapped");
+}
+
+#[test]
+fn display_pattern_numbers_slots_right_to_left() {
+    // `(app f ?#0 ?#1)` at arity 2: slot 0 is the *first* parameter and so gets
+    // the *highest* index. Asserting on the exact string is the point — a
+    // swapped `arity - 1 - k` still produces a well-formed `lam2`.
+    let h0 = Id::from(2);
+    let h1 = Id::from(3);
+    let nodes: Vec<PatLang> = vec![
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::App),
+            children: vec![Id::from(1), h0, h1],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::from_name("f")),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(0u32)),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(1u32)),
+            children: vec![],
+        },
+    ];
+
+    let rendered = TypeScript::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![h0], vec![h1]], &[0, 0], &[vec![], vec![]]);
+
+    assert_eq!(rendered, "(lam2 (app f $1 $0))", "slot k must render as $(arity - 1 - k)");
+}
+
+#[test]
+fn display_pattern_shifts_captured_indices_by_occurrence_depth() {
+    // Two occurrences of the same higher-order slot at different binder depths.
+    // Both capture the corpus index `$0`, but the deeper one sits under one
+    // extra `lam1`, so its captured argument must shift up by that delta while
+    // the shallower one does not — this is the `occ_shift` arithmetic, and it
+    // is invisible to any test whose occurrences all sit at `var_depth`.
+    //
+    //   (app (lam1 ?#0) (lam1 (lam1 ?#0)))   with var_depth[0] = 1
+    let shallow = Id::from(3);
+    let deep = Id::from(5);
+    let nodes: Vec<PatLang> = vec![
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::App),
+            children: vec![Id::from(1), Id::from(2)],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::Lam(1)),
+            children: vec![shallow],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::Lam(1)),
+            children: vec![Id::from(4)],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(0u32)),
+            children: vec![],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Node(TsOp::Lam(1)),
+            children: vec![deep],
+        },
+        OpChildrenLanguage {
+            op: OpWithVar::Var(egg::Var::from(0u32)),
+            children: vec![],
+        },
+    ];
+
+    let rendered = TypeScript::display_pattern_as_lambda::<TsOp>(&nodes, &[vec![shallow, deep]], &[1], &[vec![0]]);
+
+    assert!(rendered.contains("(app $1 $0)"), "the occurrence at var_depth captures $0 unshifted, got {rendered}");
+    assert!(rendered.contains("(app $2 $1)"), "the occurrence one binder deeper captures $1, got {rendered}");
+}
+
+// ? ho_occurrence_cost_test.rs
+// Tests for `LanguageFamily::ho_occurrence_cost` — the per-occurrence cost of
+// the η-wrap that `compute_body_size_with_ho` adds for a higher-order metavar.
+//
+// The contract is "the summed node cost of the wrap `wrap_pattern_with_db_apps`
+// actually builds for that occurrence", so each family's arithmetic is checked
+// against its own constructor rather than against a hard-coded number alone.
+// The two shapes genuinely differ: `LambdaCalc` curries, paying one `App` per
+// captured index, while `TypeScript` emits one flat `App` however many indices
+// it carries — which is exactly the assumption `compute_body_size_with_ho`
+// used to bake in for every family.
+
+// use egg::{Id, RecExpr};
+// use egg_stitch::cost::compute_recexpr_size;
+// use egg_stitch::lang::{LambdaCalc, LambdaCalcLanguage, LanguageFamily, Op, OpChildrenLanguage, OpDB, OpWithVar, TsOp, TypeScript, Weights};
+
+const W: Weights = Weights { sym_var_cost: 2, app_cost: 5, lam_cost: 7 };
+
+/// Cost of the nodes an η-wrap adds around `head`, measured from the built
+/// expression: the wrapped subtree's size minus the head's own size.
+fn wrap_size<L: egg_stitch::lang::StitchLanguage>(expr: &RecExpr<L>, wrapped: Id, head: Id) -> u32 {
+    (compute_recexpr_size(expr, wrapped, &W) - compute_recexpr_size(expr, head, &W)) as u32
+}
+
+#[test]
+fn typescript_charges_one_app_however_many_indices() {
+    assert_eq!(TypeScript::ho_occurrence_cost(1, &W), 5 + 2);
+    assert_eq!(TypeScript::ho_occurrence_cost(2, &W), 5 + 2 * 2);
+    assert_eq!(TypeScript::ho_occurrence_cost(3, &W), 5 + 3 * 2);
+}
+
+#[test]
+fn typescript_cost_matches_the_wrap_it_builds() {
+    for h in 1..=4u32 {
+        let mut r: RecExpr<OpChildrenLanguage<OpWithVar<TsOp>>> = RecExpr::default();
+        let head = r.add(TypeScript::make_var::<TsOp>(egg::Var::from(0u32)));
+        let db_args: Vec<i32> = (0..h as i32).rev().collect();
+        let wrapped = TypeScript::wrap_pattern_with_db_apps::<TsOp>(&mut r, head, &db_args);
+        assert_eq!(wrap_size(&r, wrapped, head), TypeScript::ho_occurrence_cost(h, &W), "ho_occurrence_cost({h}) must equal the wrap the family actually builds");
+    }
+}
+
+#[test]
+fn lambda_calc_charges_one_app_per_index() {
+    assert_eq!(LambdaCalc::ho_occurrence_cost(1, &W), 5 + 2);
+    assert_eq!(LambdaCalc::ho_occurrence_cost(2, &W), 2 * (5 + 2));
+    assert_eq!(LambdaCalc::ho_occurrence_cost(3, &W), 3 * (5 + 2));
+}
+
+#[test]
+fn lambda_calc_cost_matches_the_wrap_it_builds() {
+    for h in 1..=4u32 {
+        let mut r: RecExpr<LambdaCalcLanguage<OpWithVar<OpDB<Op>>>> = RecExpr::default();
+        let head = r.add(LambdaCalc::make_var::<OpDB<Op>>(egg::Var::from(0u32)));
+        let db_args: Vec<i32> = (0..h as i32).rev().collect();
+        let wrapped = LambdaCalc::wrap_pattern_with_db_apps::<OpDB<Op>>(&mut r, head, &db_args);
+        assert_eq!(wrap_size(&r, wrapped, head), LambdaCalc::ho_occurrence_cost(h, &W), "ho_occurrence_cost({h}) must equal the wrap the family actually builds");
+    }
+}
+
+#[test]
+fn the_two_families_disagree_from_arity_two_up() {
+    // At h = 1 both shapes are one app plus one leaf, which is why the old
+    // hard-coded `h * (app_cost + sym_var_cost)` in `compute_body_size_with_ho`
+    // looked right for so long. The shapes diverge as soon as a slot captures
+    // two indices.
+    assert_eq!(TypeScript::ho_occurrence_cost(1, &W), LambdaCalc::ho_occurrence_cost(1, &W));
+    assert!(TypeScript::ho_occurrence_cost(2, &W) < LambdaCalc::ho_occurrence_cost(2, &W));
 }
